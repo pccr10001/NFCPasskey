@@ -8,6 +8,7 @@ import android.util.Base64
 import android.util.Log
 import androidx.credentials.CreatePublicKeyCredentialRequest
 import androidx.credentials.CreatePublicKeyCredentialResponse
+import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.provider.PendingIntentHandler
 import de.cotech.hw.SecurityKeyManager
@@ -68,10 +69,7 @@ class PasskeyActivity : AppCompatActivity() {
                     request!!.credentialOptions as List<GetPublicKeyCredentialOption>
 
                 val requestInfo = intent.getBundleExtra("CREDENTIAL_DATA")
-
-                publicKeyRequests.forEach { credentialOption ->
-                    Log.d("NFCPK", "requsetJson:${credentialOption.requestJson}")
-                }
+                publicKeyRequests[0].requestJson
             }
         }
 
@@ -106,7 +104,7 @@ class PasskeyActivity : AppCompatActivity() {
         dialogFragment.show(supportFragmentManager)
     }
 
-    private fun processPublicKeyCredential(publicKeyCredential: PublicKeyCredential) {
+    private fun processCreateCredential(publicKeyCredential: PublicKeyCredential) {
         val result = Intent()
         val jo = JSONObject(JsonPublicKeyCredentialSerializer().publicKeyCredentialToJsonString(publicKeyCredential))
         Log.d("NFCPK", "Before: $jo")
@@ -168,13 +166,13 @@ class PasskeyActivity : AppCompatActivity() {
         }
 
         override fun onGetAssertionResponse(publicKeyCredential: PublicKeyCredential) {
-            processPublicKeyCredential(publicKeyCredential)
+            processCreateCredential(publicKeyCredential)
         }
     }
 
     private val onMakeCredentialCallback = object : WebauthnDialogFragment.OnMakeCredentialCallback {
         override fun onMakeCredentialResponse(publicKeyCredential: PublicKeyCredential) {
-            processPublicKeyCredential(publicKeyCredential)
+            processCreateCredential(publicKeyCredential)
         }
 
         override fun onMakeCredentialCancel() {

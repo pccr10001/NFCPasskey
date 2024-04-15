@@ -1,66 +1,42 @@
 package li.power.app.fido.nfcpasskey
 
-import android.app.Activity
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.IntentFilter.MalformedMimeTypeException
 import android.nfc.NfcAdapter
+import android.nfc.Tag
+
 import android.nfc.tech.IsoDep
 import android.os.Bundle
-import android.util.Base64
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.credentials.CreatePublicKeyCredentialRequest
-import androidx.credentials.CreatePublicKeyCredentialResponse
-import androidx.credentials.GetPublicKeyCredentialOption
-import androidx.credentials.provider.PendingIntentHandler
-import androidx.navigation.findNavController
 import androidx.navigation.ui.AppBarConfiguration
-import androidx.navigation.ui.navigateUp
-import androidx.navigation.ui.setupActionBarWithNavController
 import com.google.android.material.snackbar.Snackbar
-import de.cotech.hw.SecurityKeyManager
-import de.cotech.hw.SecurityKeyManagerConfig
-import de.cotech.hw.fido2.PublicKeyCredential
-import de.cotech.hw.fido2.PublicKeyCredentialCreate
-import de.cotech.hw.fido2.internal.cbor_java.CborDecoder
-import de.cotech.hw.fido2.internal.cbor_java.model.ByteString
-import de.cotech.hw.fido2.internal.cbor_java.model.Map
-import de.cotech.hw.fido2.internal.cbor_java.model.UnicodeString
-import de.cotech.hw.fido2.internal.cose.CoseIdentifiers
-import de.cotech.hw.fido2.internal.json.JsonPublicKeyCredentialSerializer
-import de.cotech.hw.fido2.internal.json.JsonWebauthnOptionsParser
-import de.cotech.hw.fido2.internal.webauthn.AuthenticatorDataParser
-import de.cotech.hw.fido2.ui.WebauthnDialogFragment
 import li.power.app.fido.nfcpasskey.databinding.ActivityMainBinding
-import li.power.app.fido.nfcpasskey.service.ACTION_CREATE_PASSKEY
-import li.power.app.fido.nfcpasskey.service.ACTION_GET_PASSKEY
-import li.power.app.fido.nfcpasskey.service.EXTRA_TOKEN_ID
-import li.power.app.fido.nfcpasskey.service.FidoCredentialProviderService
-import org.bouncycastle.jce.ECNamedCurveTable
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.bouncycastle.jce.spec.ECPublicKeySpec
-import org.json.JSONArray
-import org.json.JSONObject
-import java.security.KeyFactory
-import java.security.Security
-import kotlin.io.encoding.ExperimentalEncodingApi
+import li.power.app.fido.nfcpasskey.model.AppDatabase
+import li.power.app.fido.nfcpasskey.model.Token
+import li.power.app.fido.nfcpasskey.utils.APDU
+import org.apache.commons.codec.binary.Hex
+import java.io.IOException
+import java.util.*
+import kotlin.collections.ArrayList
 
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var appBarConfiguration: AppBarConfiguration
     private lateinit var binding: ActivityMainBinding
+
+    private val TAG = "MainActivity"
 
     private var nfcAdapter: NfcAdapter? = null
     private var pendingIntent: PendingIntent? = null
-    private var intentFilters: ArrayList<IntentFilter> = ArrayList()
+    private lateinit var intentFilters: Array<IntentFilter>
     private lateinit var techList: Array<Array<String>>
-    private val scannedUid: String? = null
+    private var scannedUid: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +47,8 @@ class MainActivity : AppCompatActivity() {
             Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
                 .setAction("Action", null).show()
         }
+
+        setupNfc()
 
     }
 
@@ -96,14 +74,54 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        enableForegroundDispatch()
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        intent?.let { handleIntent(it) }
     }
 
     override fun onPause() {
         super.onPause()
+        disableForegroundDispatch()
+    }
+
+    private fun handleIntent(intent: Intent) {
+        if (NfcAdapter.ACTION_TAG_DISCOVERED == intent.action || NfcAdapter.ACTION_TECH_DISCOVERED == intent.action) {
+            val tag = IsoDep.get(intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java))
+            scannedUid = Hex.encodeHexString(tag.tag.id).uppercase(Locale.getDefault())
+            Log.d(TAG, "Card detected, ID: $scannedUid")
+            try {
+                tag.connect()
+                Log.d(TAG, "Tag connected")
+
+                val resp = tag.transceive(APDU.selectFidoAppletCmd())
+                Log.d(TAG, "Select response: " + Hex.encodeHexString(resp))
+                if (resp.size < 2) {
+                    return
+                }
+
+                if (resp[resp.size - 2] != 0x90.toByte() || resp[resp.size - 1].toInt() != 0x00) {
+                    return
+                }
+
+                val tokenDao = AppDatabase.getDatabase(applicationContext).tokenDao
+                var token: Token? = tokenDao.getTokenById(scannedUid)
+
+                if (token == null) {
+                    Log.d(TAG, "New token detected")
+                    token = Token()
+                    token.id = scannedUid
+                    token.setName("Token-" + scannedUid!!.substring(scannedUid!!.length - 4))
+                    tokenDao.insertAll(token)
+                }
+                Log.d(TAG, "Token " + token.name)
+                tag.close()
+            } catch (e: IOException) {
+                throw RuntimeException(e)
+            }
+        }
     }
 
     private fun setupNfc() {
@@ -134,15 +152,15 @@ class MainActivity : AppCompatActivity() {
         } catch (e: MalformedMimeTypeException) {
             e.printStackTrace()
         }
-        intentFilters.addAll(listOf(filter))
-        techList = arrayOf<Array<String>>(arrayOf<String>(IsoDep::class.java.name))
+        intentFilters = arrayOf(filter)
+        techList = arrayOf(arrayOf(IsoDep::class.java.name))
     }
 
     private fun enableForegroundDispatch() {
         if (nfcAdapter != null) {
             nfcAdapter!!.enableForegroundDispatch(
                 this, pendingIntent,
-                intentFilters.toArray() as Array<out IntentFilter>?, techList
+                intentFilters, techList
             )
         }
     }
