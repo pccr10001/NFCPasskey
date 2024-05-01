@@ -2,39 +2,52 @@ package li.power.app.fido.nfcpasskey
 
 import android.app.Activity
 import android.content.Intent
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Base64
 import android.util.Log
+import androidx.appcompat.app.AppCompatActivity
 import androidx.credentials.CreatePublicKeyCredentialRequest
 import androidx.credentials.CreatePublicKeyCredentialResponse
-import androidx.credentials.GetCredentialRequest
+import androidx.credentials.GetCredentialResponse
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.provider.PendingIntentHandler
+import androidx.credentials.webauthn.*
+import com.google.gson.Gson
 import de.cotech.hw.SecurityKeyManager
 import de.cotech.hw.SecurityKeyManagerConfig
 import de.cotech.hw.fido2.PublicKeyCredential
 import de.cotech.hw.fido2.PublicKeyCredentialCreate
 import de.cotech.hw.fido2.PublicKeyCredentialGet
+import de.cotech.hw.fido2.domain.PublicKeyCredentialDescriptor
 import de.cotech.hw.fido2.internal.cbor_java.CborDecoder
 import de.cotech.hw.fido2.internal.cbor_java.model.ByteString
 import de.cotech.hw.fido2.internal.cbor_java.model.Map
 import de.cotech.hw.fido2.internal.cbor_java.model.UnicodeString
 import de.cotech.hw.fido2.internal.cose.CoseIdentifiers
+import de.cotech.hw.fido2.internal.json.JsonCollectedClientDataSerializer
 import de.cotech.hw.fido2.internal.json.JsonPublicKeyCredentialSerializer
 import de.cotech.hw.fido2.internal.json.JsonWebauthnOptionsParser
 import de.cotech.hw.fido2.internal.webauthn.AuthenticatorDataParser
 import de.cotech.hw.fido2.ui.WebauthnDialogFragment
+import de.cotech.hw.internal.HwSentry
+import li.power.app.fido.nfcpasskey.model.AppDatabase
+import li.power.app.fido.nfcpasskey.model.Credential
 import li.power.app.fido.nfcpasskey.service.ACTION_CREATE_PASSKEY
 import li.power.app.fido.nfcpasskey.service.ACTION_GET_PASSKEY
 import li.power.app.fido.nfcpasskey.service.EXTRA_TOKEN_ID
+import org.apache.commons.lang3.StringEscapeUtils
+import org.apache.commons.lang3.StringUtils
+import org.bouncycastle.jcajce.provider.symmetric.ARC4.Base
 import org.bouncycastle.jce.ECNamedCurveTable
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.jce.spec.ECPublicKeySpec
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.UnsupportedEncodingException
+import java.net.URI
 import java.security.KeyFactory
 import java.security.Security
+import kotlin.experimental.and
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 class PasskeyActivity : AppCompatActivity() {
@@ -49,6 +62,7 @@ class PasskeyActivity : AppCompatActivity() {
             val securityKeyManager = SecurityKeyManager.getInstance()
             val config = SecurityKeyManagerConfig.Builder()
                 .setEnableDebugLogging(true)
+                .setSentrySupportDisabled(false)
                 .build()
             if (!securityKeyManager.initialized()) {
                 securityKeyManager.init(application, config)
@@ -60,45 +74,81 @@ class PasskeyActivity : AppCompatActivity() {
                 if (request != null) {
                     val publicKeyRequest: CreatePublicKeyCredentialRequest =
                         request.callingRequest as CreatePublicKeyCredentialRequest
-                    publicKeyRequest.origin?.let { showRegisterDialog(it, publicKeyRequest.requestJson) }
+                    request.callingAppInfo.origin
+                    showRegisterDialog(request.callingAppInfo.origin!!, publicKeyRequest.requestJson)
                 }
             } else if (intent.action.equals(ACTION_GET_PASSKEY)) {
                 val request =
                     PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
-                val publicKeyRequests =
-                    request!!.credentialOptions as List<GetPublicKeyCredentialOption>
-
-                val requestInfo = intent.getBundleExtra("CREDENTIAL_DATA")
-                publicKeyRequests[0].requestJson
+                if (request != null) {
+                    val publicKeyRequests =
+                        request.credentialOptions as List<GetPublicKeyCredentialOption>
+                    showAuthenticateDialog(request.callingAppInfo.origin!!, publicKeyRequests[0].requestJson, publicKeyRequests[0].clientDataHash)
+                }
             }
         }
-
     }
 
     private fun showRegisterDialog(origin: String, json: String) {
         val jo = JSONObject()
         jo.put("publicKey", JSONObject(json))
         Log.d("NFCPK", jo.toString())
+
+        val option = JsonWebauthnOptionsParser().fromOptionsJsonMakeCredential(jo.toString())
+        Log.d("NFCPK", Gson().toJson(option))
         val dialogFragment = WebauthnDialogFragment.newInstance(
             PublicKeyCredentialCreate.create(
                 origin,
-                JsonWebauthnOptionsParser().fromOptionsJsonMakeCredential(jo.toString())
+                option
             )
         )
         dialogFragment.setOnMakeCredentialCallback(onMakeCredentialCallback)
         dialogFragment.show(supportFragmentManager)
     }
 
-    private fun showAuthenticateDialog(origin: String, json: String) {
+    private fun showAuthenticateDialog(origin: String, json: String, clientDataHash: ByteArray?) {
         val jo = JSONObject()
-        jo.put("publicKey", JSONObject(json))
-        Log.d("NFCPK", jo.toString())
+        Log.d("NFCPK",json)
+        val request = JSONObject(json)
+        request.putOpt(
+            "challenge",
+            JSONArray(
+                Base64.decode(
+                    request.getString("challenge"),
+                    Base64.NO_WRAP or Base64.NO_PADDING or Base64.URL_SAFE
+                )
+            )
+        )
+        jo.put("publicKey", request)
+
+        val option = JsonWebauthnOptionsParser().fromOptionsJsonGetAssertion(jo.toString())
+        if(option.allowCredentials()!= null) {
+            val allowCredentials = ArrayList<PublicKeyCredentialDescriptor>()
+            for (ac in option.allowCredentials()!!) {
+                allowCredentials.add(
+                    PublicKeyCredentialDescriptor.create(
+                        ac.type(),
+                        Base64.decode(ac.id(), Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING),
+                        ac.transports()
+                    )
+                )
+            }
+            option.allowCredentials()!!.clear()
+            option.allowCredentials()!!.addAll(allowCredentials)
+        }
+
+        Log.d("NFCPK", Gson().toJson(option))
+
+        val requestIntent =
+            PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
         val dialogFragment = WebauthnDialogFragment.newInstance(
             PublicKeyCredentialGet.create(
                 origin,
-                JsonWebauthnOptionsParser().fromOptionsJsonGetAssertion(jo.toString())
+                option,
+                clientDataHash,
             )
         )
+
         dialogFragment.setOnGetAssertionCallback(onGetAssertionCallback)
 
         dialogFragment.show(supportFragmentManager)
@@ -139,7 +189,7 @@ class PasskeyActivity : AppCompatActivity() {
 
         response.put("publicKey", b64Encode(kf.generatePublic(pubKeySpec).encoded))
         response.put("authenticatorData", b64Encode(authDataBytes.bytes))
-        response.putOpt("transports", JSONArray().put("hybrid"))
+        response.putOpt("transports", JSONArray().put("nfc"))
         jo.put("authenticatorAttachment", "cross-platform")
         jo.put("clientExtensionResults", JSONObject())
         jo.put("response", response)
@@ -150,7 +200,104 @@ class PasskeyActivity : AppCompatActivity() {
             result, CreatePublicKeyCredentialResponse(jo.toString())
         )
 
+        var credentialDao = AppDatabase.getDatabase(this).credentialDao
+        var credId = publicKeyCredential.id()
+        val request =
+            PendingIntentHandler.retrieveProviderCreateCredentialRequest(intent)
+        val publicKeyRequest = request?.callingRequest as CreatePublicKeyCredentialRequest
+
+        val option = PublicKeyCredentialCreationOptions(publicKeyRequest.requestJson)
+
+        val credential = Credential(
+            credId,
+            option.rp.id,
+            option.rp.name,
+            String(option.user.id),
+            option.user.name,
+            b64Encode(kf.generatePublic(pubKeySpec).encoded),
+            ""
+        )
+
+        if (SecurityKeyManager.getLastTagId().isNotEmpty()) {
+            credential.tokenId = SecurityKeyManager.getLastTagId()
+        }
+
+        credentialDao.insertAll(credential)
+        Log.d("NFCPK", Gson().toJson(credential))
         setResult(Activity.RESULT_OK, result)
+        finish()
+    }
+
+    private class ExternalAuthenticatorResponse(
+        override var clientJson: JSONObject,
+        private val clientJsonString: String,
+        private val clientDataHash: ByteArray,
+        private val authenticatorData: ByteArray,
+        private val signature: ByteArray,
+        private val userHandle: ByteArray
+    ) :
+        AuthenticatorResponse {
+        override fun json(): JSONObject {
+            var response = JSONObject()
+            response.put("clientDataJSON", clientJsonString)
+            response.put("clientDataHash", JSONArray(clientDataHash))
+            response.put(
+                "authenticatorData",
+                Base64.encodeToString(authenticatorData, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            )
+            response.put(
+                "signature",
+                Base64.encodeToString(signature, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            )
+            response.put(
+                "userHandle",
+                Base64.encodeToString(userHandle, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            )
+            return response
+        }
+    }
+
+    private fun processGetCredential(publicKeyCredential: PublicKeyCredential) {
+        val requestIntent =
+            PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
+        val publicKeyRequests =
+            requestIntent!!.credentialOptions as List<GetPublicKeyCredentialOption>
+
+        val jo = JSONObject(JsonPublicKeyCredentialSerializer().publicKeyCredentialToJsonString(publicKeyCredential))
+
+        Log.d("NFCPK", jo.toString())
+        val authDataBytes = b64Decode(jo.getJSONObject("response").getString("authenticatorData"))
+
+        var userHandle = ByteArray(0)
+
+        if (jo.getJSONObject("response").has("userHandle")) {
+            userHandle = b64Decode(jo.getJSONObject("response").getString("userHandle"))
+        }
+
+
+        val credential = FidoPublicKeyCredential(
+            rawId = publicKeyCredential.rawId(),
+            response = ExternalAuthenticatorResponse(
+                JSONObject(),
+                jo.getJSONObject("response").getString("clientDataJson"),
+                publicKeyRequests[0].clientDataHash!!,
+                authDataBytes,
+                Base64.decode(
+                    jo.getJSONObject("response").getString("signature"),
+                    Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+                ),
+                userHandle,
+            ),
+            authenticatorAttachment = "cross-platform"
+        )
+        val result = Intent()
+        val passkeyCredential = androidx.credentials.PublicKeyCredential(credential.json())
+        PendingIntentHandler.setGetCredentialResponse(
+            result, GetCredentialResponse(passkeyCredential)
+        )
+        Log.d("NFCPK", Gson().toJson(passkeyCredential))
+
+        setResult(RESULT_OK, result)
         finish()
     }
 
@@ -166,7 +313,7 @@ class PasskeyActivity : AppCompatActivity() {
         }
 
         override fun onGetAssertionResponse(publicKeyCredential: PublicKeyCredential) {
-            processCreateCredential(publicKeyCredential)
+            processGetCredential(publicKeyCredential)
         }
     }
 
@@ -188,8 +335,15 @@ class PasskeyActivity : AppCompatActivity() {
 
     @OptIn(ExperimentalEncodingApi::class)
     fun b64Encode(data: ByteArray): String {
-        // replace with import androidx.credentials.webauthn.WebAuthnUtils in future
         return kotlin.io.encoding.Base64.UrlSafe.encode(data).replace("=", "")
+    }
+
+    private fun b64Decode(data: String): ByteArray {
+        return try {
+            Base64.decode(data, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        } catch (e: Exception) {
+            ByteArray(0)
+        }
     }
 
 
@@ -204,6 +358,4 @@ class PasskeyActivity : AppCompatActivity() {
         Security.removeProvider(BouncyCastleProvider.PROVIDER_NAME)
         Security.insertProviderAt(BouncyCastleProvider(), 1)
     }
-
-
 }

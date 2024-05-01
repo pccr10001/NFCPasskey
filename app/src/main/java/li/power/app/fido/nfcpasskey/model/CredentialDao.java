@@ -14,6 +14,13 @@ public interface CredentialDao {
     Credential getCredentialByUserHandle(String uh);
     @Query("SELECT * FROM credentials WHERE tokenId IN (:id)")
     List<Credential> getCredentialsByTokenId(String id);
+
+    @Query("SELECT * FROM credentials WHERE rpId IN (:id)")
+    List<Credential> getCredentialsByRpId(String id);
+
+    @Query("SELECT * FROM credentials")
+    List<Credential> getCredentials();
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insertAll(Credential... credentials);
     @Update(onConflict = OnConflictStrategy.REPLACE)

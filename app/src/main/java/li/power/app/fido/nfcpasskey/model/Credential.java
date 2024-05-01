@@ -8,27 +8,47 @@ import androidx.room.Entity;
 import androidx.room.PrimaryKey;
 
 import java.io.Serializable;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.util.Date;
 
 @Entity(tableName = "credentials")
 public class Credential implements Serializable {
     @PrimaryKey
-    @ColumnInfo(name="credentialId")
+    @ColumnInfo(name = "credentialId")
     @NonNull
     private String credentialId;
-    @ColumnInfo(name="rpId")
+    @ColumnInfo(name = "rpId")
     @NonNull
     private String rpId;
-    @ColumnInfo(name="serviceName")
+    @ColumnInfo(name = "serviceName")
     private String serviceName;
-    @ColumnInfo(name="userHandle")
+    @ColumnInfo(name = "userHandle")
     private String userHandle;
-    @ColumnInfo(name="displayName")
+    @ColumnInfo(name = "displayName")
     private String displayName;
-    @ColumnInfo(name="publicKey")
+    @ColumnInfo(name = "publicKey")
     @NonNull
     private String publicKey;
-    @ColumnInfo(name="tokenId")
+    @ColumnInfo(name = "tokenId")
     private String tokenId;
+
+    @ColumnInfo(name = "created")
+    private long created;
+
+    @ColumnInfo(name = "lastUsed")
+    private long lastUsed;
+
+    public Credential(@NonNull String credentialId, @NonNull String rpId, String serviceName, String userHandle, String displayName, @NonNull String publicKey, String tokenId) {
+        this.credentialId = credentialId;
+        this.rpId = rpId;
+        this.serviceName = serviceName;
+        this.userHandle = userHandle;
+        this.displayName = displayName;
+        this.publicKey = publicKey;
+        this.tokenId = tokenId;
+        this.created = new java.util.Date().getTime();
+    }
 
     public String getRpId() {
         return rpId;
@@ -55,19 +75,19 @@ public class Credential implements Serializable {
     }
 
     public byte[] getCredentialIdBytes() {
-        return Base64.decode(credentialId, Base64.URL_SAFE| Base64.NO_PADDING);
+        return Base64.decode(credentialId, Base64.URL_SAFE | Base64.NO_PADDING);
     }
 
     public void setCredentialIdBytes(byte[] credentialId) {
-        this.credentialId = Base64.encodeToString(credentialId, Base64.URL_SAFE| Base64.NO_PADDING);
+        this.credentialId = Base64.encodeToString(credentialId, Base64.URL_SAFE | Base64.NO_PADDING);
     }
 
     public byte[] getUserHandleBytes() {
-        return Base64.decode(userHandle, Base64.URL_SAFE| Base64.NO_PADDING);
+        return Base64.decode(userHandle, Base64.URL_SAFE | Base64.NO_PADDING);
     }
 
     public void setUserHandleBytes(byte[] userHandle) {
-        this.userHandle = Base64.encodeToString(userHandle, Base64.URL_SAFE| Base64.NO_PADDING);
+        this.userHandle = Base64.encodeToString(userHandle, Base64.URL_SAFE | Base64.NO_PADDING);
     }
 
     public String getUserHandle() {
@@ -100,5 +120,21 @@ public class Credential implements Serializable {
 
     public void setTokenId(String tokenId) {
         this.tokenId = tokenId;
+    }
+
+    public long getCreated() {
+        return created;
+    }
+
+    public void setCreated(long created) {
+        this.created = created;
+    }
+
+    public long getLastUsed() {
+        return lastUsed;
+    }
+
+    public void setLastUsed(long lastUsed) {
+        this.lastUsed = lastUsed;
     }
 }

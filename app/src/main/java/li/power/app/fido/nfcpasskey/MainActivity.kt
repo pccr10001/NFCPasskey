@@ -19,6 +19,7 @@ import com.google.android.material.snackbar.Snackbar
 import li.power.app.fido.nfcpasskey.databinding.ActivityMainBinding
 import li.power.app.fido.nfcpasskey.model.AppDatabase
 import li.power.app.fido.nfcpasskey.model.Token
+import li.power.app.fido.nfcpasskey.model.TokenDao
 import li.power.app.fido.nfcpasskey.utils.APDU
 import org.apache.commons.codec.binary.Hex
 import java.io.IOException
@@ -44,8 +45,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
         binding.fab.setOnClickListener { view ->
-            Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-                .setAction("Action", null).show()
+            val tokenDao = AppDatabase.getDatabase(applicationContext).tokenDao
+            val credentialDao = AppDatabase.getDatabase(applicationContext).credentialDao
+            for(t in tokenDao.tokens){
+                tokenDao.delete(t)
+            }
+            for(c in credentialDao.credentials){
+                credentialDao.delete(c)
+            }
+            showToast("DB cleared")
         }
 
         setupNfc()
@@ -110,16 +118,17 @@ class MainActivity : AppCompatActivity() {
                 var token: Token? = tokenDao.getTokenById(scannedUid)
 
                 if (token == null) {
-                    Log.d(TAG, "New token detected")
+                    showToast("New token $scannedUid detected")
                     token = Token()
                     token.id = scannedUid
                     token.setName("Token-" + scannedUid!!.substring(scannedUid!!.length - 4))
                     tokenDao.insertAll(token)
+
                 }
                 Log.d(TAG, "Token " + token.name)
                 tag.close()
-            } catch (e: IOException) {
-                throw RuntimeException(e)
+            } catch (e: Exception) {
+                showToast("Tag lost")
             }
         }
     }
