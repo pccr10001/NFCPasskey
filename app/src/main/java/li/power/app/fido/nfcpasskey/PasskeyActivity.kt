@@ -51,6 +51,8 @@ import kotlin.experimental.and
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 class PasskeyActivity : AppCompatActivity() {
+
+    var authenticatorType = "Cross-Platform"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_passkey)
@@ -69,44 +71,59 @@ class PasskeyActivity : AppCompatActivity() {
             }
 
             if (intent.action.equals(ACTION_CREATE_PASSKEY)) {
+                authenticatorType = intent.getStringExtra(EXTRA_TOKEN_ID)!!
                 val request =
                     PendingIntentHandler.retrieveProviderCreateCredentialRequest(intent)
                 if (request != null) {
                     val publicKeyRequest: CreatePublicKeyCredentialRequest =
                         request.callingRequest as CreatePublicKeyCredentialRequest
-                    request.callingAppInfo.origin
-                    showRegisterDialog(request.callingAppInfo.origin!!, publicKeyRequest.requestJson)
+
+                    showRegisterDialog(request.callingAppInfo.origin, publicKeyRequest.requestJson)
                 }
             } else if (intent.action.equals(ACTION_GET_PASSKEY)) {
+                authenticatorType = intent.getStringExtra("type")!!
                 val request =
                     PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
                 if (request != null) {
                     val publicKeyRequests =
                         request.credentialOptions as List<GetPublicKeyCredentialOption>
-                    showAuthenticateDialog(request.callingAppInfo.origin!!, publicKeyRequests[0].requestJson, publicKeyRequests[0].clientDataHash)
+                    showAuthenticateDialog(request.callingAppInfo.origin, publicKeyRequests[0].requestJson, publicKeyRequests[0].clientDataHash)
                 }
             }
         }
     }
 
-    private fun showRegisterDialog(origin: String, json: String) {
+    private fun showRegisterDialog(origin: String?, json: String) {
         val jo = JSONObject()
         jo.put("publicKey", JSONObject(json))
         Log.d("NFCPK", jo.toString())
 
         val option = JsonWebauthnOptionsParser().fromOptionsJsonMakeCredential(jo.toString())
         Log.d("NFCPK", Gson().toJson(option))
-        val dialogFragment = WebauthnDialogFragment.newInstance(
-            PublicKeyCredentialCreate.create(
-                origin,
-                option
+        if(origin == null) {
+            val dialogFragment = WebauthnDialogFragment.newInstance(
+                PublicKeyCredentialCreate.create(
+                    "https://" + option.rp().id(),
+                    option
+                )
             )
-        )
-        dialogFragment.setOnMakeCredentialCallback(onMakeCredentialCallback)
-        dialogFragment.show(supportFragmentManager)
+            dialogFragment.setOnMakeCredentialCallback(onMakeCredentialCallback)
+            dialogFragment.show(supportFragmentManager)
+            return
+        }
+            val dialogFragment = WebauthnDialogFragment.newInstance(
+                PublicKeyCredentialCreate.create(
+                    origin,
+                    option
+                )
+            )
+            dialogFragment.setOnMakeCredentialCallback(onMakeCredentialCallback)
+            dialogFragment.show(supportFragmentManager)
+
+
     }
 
-    private fun showAuthenticateDialog(origin: String, json: String, clientDataHash: ByteArray?) {
+    private fun showAuthenticateDialog(origin: String?, json: String, clientDataHash: ByteArray?) {
         val jo = JSONObject()
         Log.d("NFCPK",json)
         val request = JSONObject(json)
@@ -139,8 +156,20 @@ class PasskeyActivity : AppCompatActivity() {
 
         Log.d("NFCPK", Gson().toJson(option))
 
-        val requestIntent =
-            PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
+        if(origin == null){
+
+            val dialogFragment = WebauthnDialogFragment.newInstance(
+                PublicKeyCredentialGet.create(
+                    "https://" + option.rpId(),
+                    option,
+                    clientDataHash,
+                )
+            )
+
+            dialogFragment.setOnGetAssertionCallback(onGetAssertionCallback)
+            dialogFragment.show(supportFragmentManager)
+            return
+        }
         val dialogFragment = WebauthnDialogFragment.newInstance(
             PublicKeyCredentialGet.create(
                 origin,
@@ -150,7 +179,6 @@ class PasskeyActivity : AppCompatActivity() {
         )
 
         dialogFragment.setOnGetAssertionCallback(onGetAssertionCallback)
-
         dialogFragment.show(supportFragmentManager)
     }
 
@@ -288,7 +316,7 @@ class PasskeyActivity : AppCompatActivity() {
                 ),
                 userHandle,
             ),
-            authenticatorAttachment = "cross-platform"
+            authenticatorAttachment = authenticatorType
         )
         val result = Intent()
         val passkeyCredential = androidx.credentials.PublicKeyCredential(credential.json())

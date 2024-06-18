@@ -48,22 +48,28 @@ class FidoCredentialProviderService : CredentialProviderService() {
 
             val passkeyEntries: MutableList<CredentialEntry> = mutableListOf()
 
-            if (option is BeginGetPublicKeyCredentialOption) {
-                var pkcOption = PublicKeyCredentialRequestOptions(option.requestJson)
-                val tokens = AppDatabase.getDatabase(applicationContext).tokenDao.tokens
 
-                for (token in tokens) {
-                    val data = Bundle()
-                    data.putString("credId",WebsafeBase64.encodeToString("0".encodeToByteArray()))
-                    passkeyEntries.add(
-                        PublicKeyCredentialEntry.Builder(
-                            context = applicationContext,
-                            username = token.name,
-                            pendingIntent = createNewGetPendingIntent(data),
-                            beginGetPublicKeyCredentialOption = option
-                        ).build()
-                    )
-                }
+
+            if (option is BeginGetPublicKeyCredentialOption) {
+
+                val data = Bundle()
+                data.putString("credId", WebsafeBase64.encodeToString("0".encodeToByteArray()))
+                passkeyEntries.add(
+                    PublicKeyCredentialEntry.Builder(
+                        context = applicationContext,
+                        username = "Platform",
+                        pendingIntent = createNewGetPendingIntent(data, "platform"),
+                        beginGetPublicKeyCredentialOption = option
+                    ).build()
+                )
+                passkeyEntries.add(
+                    PublicKeyCredentialEntry.Builder(
+                        context = applicationContext,
+                        username = "Cross-Platform",
+                        pendingIntent = createNewGetPendingIntent(data, "cross-platform"),
+                        beginGetPublicKeyCredentialOption = option
+                    ).build()
+                )
 
                 callback.onResult(BeginGetCredentialResponse(passkeyEntries))
                 return
@@ -89,31 +95,31 @@ class FidoCredentialProviderService : CredentialProviderService() {
         // account, and one for storing them to the 'Family' account. These
         // accounts are local to this sample app only.
         val createEntries: MutableList<CreateEntry> = mutableListOf()
-        val tokenDao: TokenDao = AppDatabase.getDatabase(this).getTokenDao()
-            for (token in tokenDao.getTokensWithCredentials()) {
-                createEntries.add(
-                    CreateEntry(
-                        token.token.id,
-                        createNewPendingIntent(token.token.id),
-                        token.token.name,
-                        null, null,
-                        0,
-                        token.credentials.size,
-                        token.credentials.size,
-                        false
-                    )
-                )
-            }
-        createEntries.add(CreateEntry(
-            "USB",
-            createNewPendingIntent("USB"),
-            "USB Authenticator",
-            null, null,
-            0,
-            0,
-            0,
-            false
-        ))
+
+        createEntries.add(
+            CreateEntry(
+                "Platform",
+                createNewPendingIntent("platform"),
+                "Platform",
+                null, null,
+                0,
+                0,
+                0,
+                false
+            )
+        )
+        createEntries.add(
+            CreateEntry(
+                "Cross-Platform",
+                createNewPendingIntent("cross-platform"),
+                "Cross-Platform Authenticator",
+                null, null,
+                0,
+                0,
+                0,
+                false
+            )
+        )
         return BeginCreateCredentialResponse(createEntries)
     }
 
@@ -129,12 +135,13 @@ class FidoCredentialProviderService : CredentialProviderService() {
     }
 
     private fun createNewGetPendingIntent(
-        extra: Bundle? = null,
+        extra: Bundle? = null, type: String?= "Cross-Platform"
     ): PendingIntent {
         val intent = Intent(ACTION_GET_PASSKEY).setPackage(this.packageName)
         if (extra != null) {
             intent.putExtra("CREDENTIAL_DATA", extra)
         }
+        intent.putExtra("type", type)
 
         val requestCode = (1..9999).random()
 
